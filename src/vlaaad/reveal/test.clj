@@ -113,9 +113,8 @@
     (-> ret
         (update :ns #(sort-by str %))
         (update :var (fn [vars]
-                       (->> vars
-                            (remove #(ns (.-ns ^Var %)))
-                            (sort-by #(:line (meta %)))))))))
+                       (remove #(ns (.-ns ^Var %))
+                               vars))))))
 
 (defn failure-path-comparator [a b]
   (let [max-length (max (count a) (count b))]
@@ -222,6 +221,27 @@
               mark-failure-path)
     :out (update state :output add-value (into (:ctx e) (:ctx state)) e)))
 
+(defn- test-vars [vars]
+  ;; Runs the tests in the order they appear in the source file.
+  (->> vars
+       (sort-by #(:line (meta %)))
+       (t/test-vars)))
+
+(defn- test-ns [ns]
+  ;; Our own implementation of clojure.test/test-ns. The only difference is this
+  ;; one calls our own test-vars function, which runs the tests in the order
+  ;; they appear in the source file.
+  (binding [t/*report-counters* (ref t/*initial-report-counters*)]
+    (let [ns-obj (the-ns ns)]
+      (t/do-report {:type :begin-test-ns :ns ns-obj})
+      ;; If the namespace has a test-ns-hook function, call that:
+      (if-let [v (find-var (symbol (str (ns-name ns-obj)) "test-ns-hook"))]
+        ((var-get v))
+        ;; Otherwise, just test every var in the namespace.
+        (test-vars (vals (ns-interns ns-obj))))
+      (t/do-report {:type :end-test-ns :ns ns-obj}))
+    @t/*report-counters*))
+
 (defn test! [{:keys [state test]}]
   (event/daemon-future
     (let [old @state]
@@ -229,7 +249,7 @@
                  (compare-and-set! state old (assoc fresh-state :running true)))
         (let [process #(swap! state process-state %)]
           (try
-            (let [{:keys [ns var]} (test->ns+var* test)]
+            (let [{:keys [ns var]} (test->ns+var test)]
               (binding [*out* (PrintWriter-on #(process {:type :out
                                                          :message (str/trim-newline %)
                                                          :ctx (vec t/*testing-contexts*)})
@@ -249,8 +269,8 @@
                                                   :error (assoc x :type :fail :ctx (vec t/*testing-contexts*))
                                                   nil)]
                                      (process e)))]
-                (run! t/test-ns ns)
-                (t/test-vars var)))
+                (run! test-ns ns)
+                (test-vars var)))
             (catch Exception e
               (process {:type :fail
                         :ctx (vec t/*testing-contexts*)
