@@ -4,7 +4,8 @@
             [vlaaad.reveal.ns :as ns]
             [vlaaad.reveal.stream :as stream]
             [vlaaad.reveal.ui :as ui])
-  (:import [java.io BufferedWriter PrintWriter Writer]))
+  (:import [clojure.lang LineNumberingPushbackReader LispReader$Resolver]
+           [java.io BufferedWriter PrintWriter StringReader Writer]))
 
 (defn- stream-read [form ui]
   (ui (stream/as form
@@ -13,14 +14,53 @@
             (pr-str form))
           {:fill :util}))))
 
-(defn- wrap-read [ui read]
-  (fn [request-prompt request-exit]
-    (let [ret (read request-prompt request-exit)]
-      (condp = ret
-        request-exit request-exit
-        :repl/quit request-exit
-        request-prompt request-prompt
-        (doto ret (stream-read ui))))))
+(defn- read-in-current-namespace [read request-prompt request-exit]
+  (read request-prompt request-exit))
+
+(def ^:private stub-reader-resolver
+  (reify LispReader$Resolver
+    (currentNS [_] 'clojure.core)
+    (resolveClass [_ sym] sym)
+    (resolveAlias [_ sym] sym)
+    (resolveVar [_ sym] sym)))
+
+(defn- read-in-eval-file-metadata-namespace [read request-prompt request-exit]
+  ;; We assume the wrapped read reads from *in*
+  (let [^LineNumberingPushbackReader reader *in*]
+    (case (m/skip-whitespace reader)
+      :line-start request-prompt
+      :stream-end request-exit
+      (let [int-ch (.read reader)]
+        (.unread reader int-ch)
+        (if (= (int \^) int-ch)
+          ;; The following code is roughly based on m/renumbering-read, but we
+          ;; ensure that we can read forms with auto-resolved namespaced
+          ;; keywords by stubbing the reader resolver
+          (let [pre-line (.getLineNumber reader)
+                [pre-read s] (binding [*reader-resolver* stub-reader-resolver
+                                       *default-data-reader-fn* tagged-literal]
+                               (read+string {:read-cond :allow} reader))
+                {:keys [clojure.core/eval-file line] :as m} (meta pre-read)
+                re-reader (doto (LineNumberingPushbackReader. (StringReader. s))
+                            (.setLineNumber (if (and line eval-file) line pre-line)))]
+            (binding [*in* re-reader]
+              (if-let [ns-sym (ns/file-ns-symbol m)]
+                (binding [*ns* (create-ns ns-sym)]
+                  (vary-meta (read request-prompt request-exit) assoc ::eval-ns *ns*))
+                (read request-prompt request-exit))))
+          (read request-prompt request-exit))))))
+
+(defn- wrap-read [ui infer-ns read]
+  (let [invoke-read (if infer-ns
+                      read-in-eval-file-metadata-namespace
+                      read-in-current-namespace)]
+    (fn [request-prompt request-exit]
+      (let [ret (invoke-read read request-prompt request-exit)]
+        (condp = ret
+          request-exit request-exit
+          :repl/quit request-exit
+          request-prompt request-prompt
+          (doto ret (stream-read ui)))))))
 
 (defn- wrap-print [ui print]
   (fn [x]
@@ -84,22 +124,21 @@
   (eval form))
 
 (defn- eval-in-eval-file-metadata-namespace [eval form]
-  (if-let [source-ns-symbol (some-> form meta ns/file-ns-symbol)]
-    (let [source-ns (create-ns source-ns-symbol)]
-      (binding [*ns* source-ns]
-        (eval form)))
+  (if-let [ns (some-> form meta ::eval-ns)]
+    (binding [*ns* ns]
+      (eval form))
     (eval form)))
 
 (defn- wrap-eval [ui infer-ns eval]
   (let [out (make-print ui *out* :string)
         err (make-print ui *err* :error)
-        apply-eval (if infer-ns
-                     eval-in-eval-file-metadata-namespace
-                     eval-in-current-namespace)]
+        invoke-eval (if infer-ns
+                      eval-in-eval-file-metadata-namespace
+                      eval-in-current-namespace)]
     (fn [form]
       (binding [*out* out
                 *err* err]
-        (let [ret (apply-eval eval form)]
+        (let [ret (invoke-eval eval form)]
           (flush)
           ret)))))
 
@@ -117,7 +156,7 @@
         repl-args (-> args
                       (select-keys [:init :need-prompt :prompt :flush :read :eval :print :caught])
                       (update :init #(or % init))
-                      (update :read #(wrap-read ui (or % m/repl-read)))
+                      (update :read #(wrap-read ui (:infer-ns args true) (or % m/repl-read)))
                       (update :eval #(wrap-eval ui (:infer-ns args true) (or % eval)))
                       (update :print #(wrap-print ui (or % prn)))
                       (update :caught #(wrap-caught ui (or % m/repl-caught))))]
