@@ -253,6 +253,7 @@
             :refs (into {::text-field {:fx/type fx.text-field/lifecycle
                                        :text-formatter rfx/code-text-formatter
                                        :text text
+                                       :prompt-text (pr-str (type (:value annotated-value)))
                                        :on-focused-changed {::event/type ::on-text-focused
                                                             :id id}
                                        :on-key-pressed {::event/type ::on-text-key-pressed
