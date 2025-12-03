@@ -138,6 +138,10 @@
         (with-meta #(rio/run-command! command-line)
                    {:vlaaad.reveal.ui/ignore-action-result true})))))
 
+(defaction ::text [x]
+  (when (string? x)
+    #(stream/as x (stream/raw-string x {:fill :util}))))
+
 (defn execute [id x ann]
   (event/daemon-future
     (if-let [action (@*registry id)]
