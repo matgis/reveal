@@ -95,6 +95,13 @@
                   set)]
     vars))
 
+(defn- as-deftest-var [deftest]
+  (when (fn? deftest)
+    (let [var (-> deftest class .getName Compiler/demunge symbol resolve)]
+      (when (and (var? var)
+                 (fn? (:test (meta var))))
+        var))))
+
 (defn- test->ns+var* [test]
   (cond
     (= :everything test) (test->ns+var* {})
@@ -104,7 +111,9 @@
     (instance? Var test) {:var #{test}}
     (map? test) {:var (scan-classpath test)}
     (coll? test) (apply merge-with into (map test->ns+var* test))
-    :else (throw (ex-info (str "Don't know how to test " test) {:on test}))))
+    :else (or (when-let [var (as-deftest-var test)]
+                {:var #{var}})
+              (throw (ex-info (str "Don't know how to test " test) {:on test})))))
 
 (defn- test->ns+var [test]
   (let [{:keys [ns]
@@ -622,4 +631,6 @@
     (and (qualified-symbol? x)
          (let [var (resolve x)]
            (and var (testable-var? var))))
+    #(-> {:fx/type test-view :test x :auto-run true})
+    (some-> x as-deftest-var testable-var?)
     #(-> {:fx/type test-view :test x :auto-run true})))
