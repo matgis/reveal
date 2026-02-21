@@ -1,7 +1,8 @@
 (ns vlaaad.reveal.prefs
   (:require [clojure.spec.alpha :as s]
             [clojure.edn :as edn]
-            [clojure.main :as m])
+            [clojure.main :as m]
+            [clojure.string :as string])
   (:import [java.net URL MalformedURLException]
            [javafx.scene.text Font]))
 
@@ -29,8 +30,13 @@
 (s/def ::theme
   #{:dark :light})
 
+(s/def ::editor
+  (s/and string?
+         #(string/includes? % "{file}")
+         #(string/includes? % "{line}")))
+
 (s/def ::prefs
-  (s/keys :opt-un [::font-family ::font-size ::formatting ::theme]))
+  (s/keys :opt-un [::font-family ::font-size ::formatting ::theme ::editor]))
 
 (def prefs
   (delay
