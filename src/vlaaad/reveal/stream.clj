@@ -342,6 +342,9 @@
                                  input))))]
              (sf rf acc)))))
 
+(defn replace-non-util-fill [style fill]
+  (update style :fill #(if (= :util %1) :util %2) fill))
+
 (defn single-line [sf]
   (let [space-op (string " " {})]
     (as-is
@@ -836,11 +839,20 @@
                 (apply
                   vertical
                   (cond->
-                    [(raw-string
-                       (str (when (pos? i) "Caused by ")
-                            type
-                            (when message (str ": " message)))
-                       {:fill :error})]
+                    [(apply
+                       horizontal
+                       (cond->
+                         [(raw-string
+                            (str (when (pos? i) "Caused by ")
+                                 type
+                                 (when message ": "))
+                            {:fill :object})]
+
+                         message
+                         (conj
+                           (raw-string
+                             message
+                             {:fill :string}))))]
 
                     (pos? n)
                     (conj
@@ -850,13 +862,13 @@
                           (apply
                             vertical
                             (-> []
-                                (cond-> data (conj (override-style (single-line (stream data)) assoc :fill :error)))
+                                (cond-> data (conj (single-line (stream data))))
                                 (conj (vertically
                                         (eduction
                                           (take maxn)
                                           (map (fn [el]
                                                  (let [[class-name method-name file-name line-number] el]
-                                                   (as el (stack-trace-line class-name method-name file-name line-number {:fill :error})))))
+                                                   (as el (stack-trace-line (str class-name) (str method-name) file-name line-number {:fill :symbol})))))
                                           stack-trace)))
                                 (cond-> (< maxn n) (conj (raw-string (str "... " (- n maxn) " more") {:fill :util}))))))))))))))
         via))))
@@ -868,6 +880,9 @@
       (map-indexed
         (fn [i ^Throwable t]
           (let [cause (.getCause t)
+                message (when-let [message (.getMessage t)]
+                          (when-not (and cause (= message (str cause)))
+                            message))
                 stack-trace (into []
                                   (comp
                                     (keep
@@ -891,13 +906,20 @@
               (apply
                 vertical
                 (cond->
-                  [(raw-string
-                     (str (when (pos? i) "Caused by ")
-                          (.getName (.getClass t))
-                          (when-let [message (.getMessage t)]
-                            (when-not (and cause (= message (str cause)))
-                              (str ": " message))))
-                     {:fill :error})]
+                  [(apply
+                     horizontal
+                     (cond->
+                       [(raw-string
+                          (str (when (pos? i) "Caused by ")
+                               (.getName (.getClass t))
+                               (when message ": "))
+                          {:fill :object})]
+
+                       message
+                       (conj
+                         (raw-string
+                           message
+                           {:fill :string}))))]
 
                   (pos? n)
                   (conj
@@ -907,11 +929,11 @@
                         (apply
                           vertical
                           (-> []
-                              (cond-> ex-data (conj (override-style (single-line (stream ex-data)) assoc :fill :error)))
+                              (cond-> ex-data (conj (single-line (stream ex-data))))
                               (conj (vertically
                                       (eduction
                                         (take maxn)
-                                        (map #(stack-trace-element % {:fill :error}))
+                                        (map #(stack-trace-element % {:fill :symbol}))
                                         stack-trace)))
                               (cond-> (< maxn n) (conj (raw-string (str "... " (- n maxn) " more") {:fill :util}))))))))))))))
       (iterate ex-cause t))))
@@ -1192,7 +1214,7 @@
     (stream x)))
 
 (defn- style-diff-value [x fill]
-  (override-style x update :fill #(if (= :util %) :util fill)))
+  (override-style x replace-non-util-fill fill))
 
 (defstream Mismatch [{:keys [- +]}]
   (let [-sf (style-diff-value
