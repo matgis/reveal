@@ -664,9 +664,13 @@
   (escaped-string k {:fill :keyword}
                   escape-layout-chars {:fill :scalar}))
 
-(defstream Symbol [sym]
-  (escaped-string sym {:fill :symbol}
-                  escape-layout-chars {:fill :scalar}))
+(defstream Symbol [sym {:keys [vlaaad.reveal.nav/key vlaaad.reveal.nav/coll]}]
+  (let [fill (if (and (= 0 key)
+                      (seq? coll))
+               :object
+               :symbol)]
+    (escaped-string sym {:fill fill}
+                    escape-layout-chars {:fill :scalar})))
 
 ;; numbers
 
