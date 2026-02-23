@@ -798,7 +798,7 @@
       (horizontal
         (raw-string s style)
         separator
-        (raw-string (str "(" file-name (when-not (neg? (int line-number)) (str ":" line-number)) ")") {:fill :util}))
+        (raw-string (str "(" file-name (when (nat-int? line-number) (str ":" line-number)) ")") {:fill :util}))
       (raw-string s style))))
 
 (defn- stack-trace-element [^StackTraceElement el style]
@@ -807,25 +807,6 @@
         file-name (.getFileName el)
         line-number (.getLineNumber el)]
     (as el (stack-trace-line class-name method-name file-name line-number style))))
-
-(defn- simplify-stack-trace [stack-trace]
-  (into []
-        (comp
-          (keep
-            (fn [[^StackTraceElement prev-el ^StackTraceElement el]]
-              (when (or (nil? prev-el)
-                        (not (and (= (.getClassName prev-el) (.getClassName el))
-                                  (= (.getFileName prev-el) (.getFileName el))
-                                  (= "invokeStatic" (.getMethodName prev-el))
-                                  (case (.getMethodName el) ("invoke" "doInvoke" "invokePrim") true false))))
-                el)))
-          (remove
-            (fn [^StackTraceElement el]
-              (case (.getClassName el)
-                ("clojure.lang.RestFn" "clojure.lang.AFn") true
-                "clojure.lang.Var" (case (.getMethodName el) ("invoke" "applyTo") true false)
-                false))))
-        (partition 2 1 (cons nil stack-trace))))
 
 (defn datafied-thrown [data]
   (let [{:keys [via trace]} data]
@@ -887,7 +868,23 @@
       (map-indexed
         (fn [i ^Throwable t]
           (let [cause (.getCause t)
-                stack-trace (simplify-stack-trace (.getStackTrace t))
+                stack-trace (into []
+                                  (comp
+                                    (keep
+                                      (fn [[^StackTraceElement prev-el ^StackTraceElement el]]
+                                        (when (or (nil? prev-el)
+                                                  (not (and (= (.getClassName prev-el) (.getClassName el))
+                                                            (= (.getFileName prev-el) (.getFileName el))
+                                                            (= "invokeStatic" (.getMethodName prev-el))
+                                                            (case (.getMethodName el) ("invoke" "doInvoke" "invokePrim") true false))))
+                                          el)))
+                                    (remove
+                                      (fn [^StackTraceElement el]
+                                        (case (.getClassName el)
+                                          ("clojure.lang.RestFn" "clojure.lang.AFn") true
+                                          "clojure.lang.Var" (case (.getMethodName el) ("invoke" "applyTo") true false)
+                                          false))))
+                                  (partition 2 1 (cons nil (.getStackTrace t))))
                 n (count stack-trace)
                 ex-data (ex-data t)]
             (as t
@@ -920,10 +917,11 @@
       (iterate ex-cause t))))
 
 (defstream Throwable [t]
+  ;; Contrary to caught exceptions, these are intentionally not prettified.
   (let [^Throwable t t
         message (.getMessage t)
         cause (.getCause t)
-        stack-trace (simplify-stack-trace (.getStackTrace t))
+        stack-trace (.getStackTrace t)
         n (count stack-trace)
         ex-data (ex-data t)]
     (horizontal
@@ -943,7 +941,18 @@
       (raw-string ")" {:fill :util}))))
 
 (defstream StackTraceElement [^StackTraceElement el]
-  (stack-trace-element el {:fill :symbol}))
+  ;; Contrary to caught exceptions, these are intentionally not prettified.
+  (let [file-name (.getFileName el)
+        method-name (.getMethodName el)
+        class-name (.getClassName el)
+        line-number (.getLineNumber el)
+        s (symbol (str class-name "." method-name))]
+    (if file-name
+      (horizontal
+        (raw-string s {:fill :symbol})
+        separator
+        (raw-string (str "(" file-name (when-not (neg? line-number) (str ":" line-number)) ")") {:fill :util}))
+      (raw-string s {:fill :symbol}))))
 
 ;; objects
 
@@ -1186,7 +1195,11 @@
         +sf (override-style
               (horizontal
                 (raw-string "+")
-                (stream +))
+                ;; Exceptions thrown during the test will end up as the + value
+                ;; in the Mismatch. Show them as prettified exceptions.
+                (if (instance? Throwable +)
+                  (thrown +)
+                  (stream +)))
               assoc :fill :success)]
     (if (horizontal-args? - +)
       (horizontal -sf separator +sf)
