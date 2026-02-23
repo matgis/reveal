@@ -1,10 +1,14 @@
 (ns vlaaad.reveal.io
-  (:require [clojure.java.io :as io]
-            [clojure.edn :as edn])
-  (:import [java.io File]
-           [clojure.lang LineNumberingPushbackReader]))
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io])
+  (:import [clojure.lang LineNumberingPushbackReader]
+           [java.io File]
+           [java.lang ProcessBuilder$Redirect]
+           [java.util List]))
 
-(def os (.toLowerCase (System/getProperty "os.name")))
+(set! *warn-on-reflection* true)
+
+(def ^String os (.toLowerCase (System/getProperty "os.name")))
 
 (def app-data-dir
   (io/file
@@ -32,3 +36,15 @@
     (let [ret (apply f (slurp-edn* file) args)]
       (spit file (pr-str ret))
       ret)))
+
+(defn run-command!
+  "Executes a command-line string using the system shell. Returns the Process."
+  ^Process [command-line]
+  {:pre [(string? command-line)]}
+  (let [^List command (if (.contains os "win")
+                        ["cmd.exe" "/c" command-line]
+                        ["/bin/sh" "-lc" command-line])]
+    (-> (ProcessBuilder. command)
+        (.redirectOutput ProcessBuilder$Redirect/DISCARD)
+        (.redirectError ProcessBuilder$Redirect/DISCARD)
+        (.start))))

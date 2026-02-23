@@ -1,14 +1,18 @@
 (ns vlaaad.reveal.action
-  (:require [clojure.datafy :as d]
-            [vlaaad.reveal.stream :as stream]
+  (:require [clojure.core.specs.alpha :as specs]
+            [clojure.datafy :as d]
             [clojure.spec.alpha :as s]
-            [clojure.core.specs.alpha :as specs]
+            [clojure.string :as string]
+            [lambdaisland.deep-diff2.diff-impl :as diff]
             [vlaaad.reveal.event :as event]
-            [lambdaisland.deep-diff2.diff-impl :as diff])
+            [vlaaad.reveal.io :as rio]
+            [vlaaad.reveal.prefs :as prefs]
+            [vlaaad.reveal.source-location :as source-location]
+            [vlaaad.reveal.stream :as stream])
   (:import [clojure.lang IDeref]
            [java.awt Desktop]
-           [java.net URI URL]
            [java.io File]
+           [java.net URI URL]
            [java.util.concurrent Future]))
 
 (defonce ^:private *registry
@@ -124,6 +128,15 @@
              (not (or (identical? Boolean/TRUE x)
                       (identical? Boolean/FALSE x))))
     (open-uri-result (URI. "https://vlaaad.github.io/illegal-booleans"))))
+
+(defaction ::editor [x]
+  (when-let [editor (:editor @prefs/prefs)]
+    (when-let [{:keys [file line]} (source-location/of-value x)]
+      (let [command-line (-> editor
+                             (string/replace "{file}" (str file))
+                             (string/replace "{line}" (str line)))]
+        (with-meta #(rio/run-command! command-line)
+                   {:vlaaad.reveal.ui/ignore-action-result true})))))
 
 (defn execute [id x ann]
   (event/daemon-future
