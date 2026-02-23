@@ -1186,35 +1186,41 @@
 (ns/when-exists lambdaisland.deep-diff.diff
   (load "stream/deep_diff"))
 
+(defn- stream-diff-value [x]
+  (if (instance? Throwable x)
+    (thrown x)
+    (stream x)))
+
+(defn- style-diff-value [x fill]
+  (override-style x update :fill #(if (= :util %) :util fill)))
+
 (defstream Mismatch [{:keys [- +]}]
-  (let [-sf (override-style
+  (let [-sf (style-diff-value
               (horizontal
                 (raw-string "-")
-                (stream -))
-              assoc :fill :error)
-        +sf (override-style
+                (stream-diff-value -))
+              :error)
+
+        +sf (style-diff-value
               (horizontal
                 (raw-string "+")
-                ;; Exceptions thrown during the test will end up as the + value
-                ;; in the Mismatch. Show them as prettified exceptions.
-                (if (instance? Throwable +)
-                  (thrown +)
-                  (stream +)))
-              assoc :fill :success)]
+                (stream-diff-value +))
+              :success)]
+
     (if (horizontal-args? - +)
       (horizontal -sf separator +sf)
       (vertical -sf +sf))))
 
 (defstream Insertion [{:keys [+]}]
-  (override-style
+  (style-diff-value
     (horizontal
       (raw-string "+")
-      (stream +))
-    assoc :fill :success))
+      (stream-diff-value +))
+    :success))
 
 (defstream Deletion [{:keys [-]}]
-  (override-style
+  (style-diff-value
     (horizontal
       (raw-string "-")
-      (stream -))
-    assoc :fill :error))
+      (stream-diff-value -))
+    :error))
