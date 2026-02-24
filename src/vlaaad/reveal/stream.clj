@@ -1208,11 +1208,6 @@
 (ns/when-exists lambdaisland.deep-diff.diff
   (load "stream/deep_diff"))
 
-(defn- stream-diff-value [x]
-  (if (instance? Throwable x)
-    (thrown x)
-    (stream x)))
-
 (defn- style-diff-value [x fill]
   (override-style x replace-non-util-fill fill))
 
@@ -1220,13 +1215,13 @@
   (let [-sf (style-diff-value
               (horizontal
                 (raw-string "-")
-                (stream-diff-value -))
+                (stream -))
               :error)
 
         +sf (style-diff-value
               (horizontal
                 (raw-string "+")
-                (stream-diff-value +))
+                (stream +))
               :success)]
 
     (if (horizontal-args? - +)
@@ -1237,12 +1232,12 @@
   (style-diff-value
     (horizontal
       (raw-string "+")
-      (stream-diff-value +))
+      (stream +))
     :success))
 
 (defstream Deletion [{:keys [-]}]
   (style-diff-value
     (horizontal
       (raw-string "-")
-      (stream-diff-value -))
+      (stream -))
     :error))
