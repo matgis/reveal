@@ -106,22 +106,67 @@
   (when (and v (.isArray (class v)))
     #(vec v)))
 
+(def ^:private diffable-map-keys
+  (into []
+        (mapcat (fn [diffable-keys]
+                  [diffable-keys
+                   [(name (first diffable-keys)) (name (second diffable-keys))]]))
+        [[:before :after]
+         [:expected :actual]
+         [:old :new]]))
+
 (defaction ::diff [x]
   (cond
     (and (vector? x) (= 2 (count x)))
     #(apply diff/diff x)
 
-    (and (map? x) (contains? x :expected) (contains? x :actual))
-    #(let [{:keys [expected actual]} x]
-       (if (and (sequential? expected)
-                (= '= (first expected))
-                (sequential? actual)
-                (= 'not (first actual))
-                (sequential? (second actual))
-                (= '= (first (second actual)))
-                (= 3 (bounded-count 4 (second actual))))
-         (apply diff/diff (drop 1 (second actual)))
-         (diff/diff expected actual)))))
+    (map? x)
+    (if (and (#{:pass :fail} (:type x))
+             (seq? (:expected x))
+             (contains? x :actual))
+
+      ;; Treat the value like a test report.
+      (fn []
+        (let [{:keys [expected actual]} x]
+          (if (or (not= '= (first expected))
+                  (not (seq? (:actual x))))
+
+            ;; The report is either from an uncaught exception or an (is ...)
+            ;; expression that doesn't use the = operator. Wrap the diffed
+            ;; values in maps with non-matching keys so that the diff algorithm
+            ;; does not attempt to diff the code expressions themselves.
+            (diff/diff {:expected expected} {:actual actual})
+
+            ;; The report is from an (is ...) expression that uses the =
+            ;; operator. In this situation, the :expected entry contains the
+            ;; checked code expression, and the :actual expression will be
+            ;; the checked code expression with the results inlined. If the
+            ;; report is from a failed test, the :actual expression will be
+            ;; wrapped in a (not ...) expression.
+            (let [expected-form-with-actual-results (condp = (first actual)
+                                                      'not (second actual)
+                                                      '= actual
+                                                      nil)]
+              (when (and (seq? expected-form-with-actual-results)
+                         (= '= (first expected-form-with-actual-results)))
+                (let [[expected-result & actual-results] (rest expected-form-with-actual-results)
+                      compared-result (reduce (fn [_ actual-result]
+                                                (if (= expected-result actual-result)
+                                                  expected-result
+                                                  (reduced actual-result)))
+                                              expected-result
+                                              actual-results)]
+                  (if (identical? expected-result compared-result)
+                    expected-result
+                    (diff/diff expected-result compared-result))))))))
+
+      ;; Treat the value like a regular map. Allow users to diff map values from
+      ;; commonly used "before" and "after" keys.
+      (when-some [[a b] (some (fn [diffed-keys]
+                                (when (every? #(contains? x %) diffed-keys)
+                                  (mapv #(get x %) diffed-keys)))
+                              diffable-map-keys)]
+        #(diff/diff a b)))))
 
 (defaction ::prettify [x]
   (cond
