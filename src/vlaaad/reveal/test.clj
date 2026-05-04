@@ -160,12 +160,10 @@
                          :path path
                          :children (apply update-children-in [] path (pop ctx) f args)})))))))
 
-(defn- add-branch [nodes ctx branch-name & {:as attrs}]
+(defn- add-branch [nodes ctx e & {:as attrs}]
   (update-children-in nodes [] ctx (fn [nodes path]
-                                     (conj nodes (assoc attrs
-                                                   :name branch-name
-                                                   :path (conj path (count nodes))
-                                                   :children [])))))
+                                     (conj nodes (merge e attrs {:path (conj path (count nodes))
+                                                                 :children []})))))
 
 (defn- add-value [nodes ctx value]
   (update-children-in nodes [] ctx (fn [nodes path]
@@ -214,7 +212,7 @@
   (case (:type e)
     :start (-> state
                (update :ctx conj (:name e))
-               (update :output add-branch (into () (:ctx state)) (:name e) :start (System/currentTimeMillis))
+               (update :output add-branch (into () (:ctx state)) e :start (System/currentTimeMillis))
                (cond-> (:test e)
                  (update :test inc)))
     :stop (-> state
@@ -251,6 +249,13 @@
       (t/do-report {:type :end-test-ns :ns ns-obj}))
     @t/*report-counters*))
 
+(defn- test-result-source-location
+  [{:keys [type expected]} testing-vars]
+  {:pre [(#{:error :fail :pass} type)]}
+  (when-some [test-var (first testing-vars)]
+    (update (source-location/of-var test-var)
+            :line #(or (some-> expected meta :line) %))))
+
 (defn test! [{:keys [state test]}]
   (event/daemon-future
     (let [old @state]
@@ -269,13 +274,21 @@
                                                      nil)
                         t/report (fn [x]
                                    (when-let [e (case (:type x)
-                                                  :begin-test-ns {:type :start :name (str (.getName ^Namespace (:ns x)))}
-                                                  :begin-test-var {:type :start :name (str (symbol (:var x))) :test true}
+                                                  :begin-test-ns (merge {:type :start :name (str (.getName ^Namespace (:ns x)))}
+                                                                        (source-location/of-ns (:ns x)))
+                                                  :begin-test-var (merge {:type :start :name (str (symbol (:var x))) :test true}
+                                                                         (source-location/of-var (:var x)))
                                                   :end-test-ns {:type :stop}
                                                   :end-test-var {:type :stop}
-                                                  :pass (assoc x :type :pass :ctx (vec t/*testing-contexts*))
-                                                  :fail (assoc x :type :fail :ctx (vec t/*testing-contexts*))
-                                                  :error (assoc x :type :fail :ctx (vec t/*testing-contexts*))
+                                                  :pass (merge x
+                                                               {:type :pass :ctx (vec t/*testing-contexts*)}
+                                                               (test-result-source-location x t/*testing-vars*))
+                                                  :fail (merge x
+                                                               {:type :fail :ctx (vec t/*testing-contexts*)}
+                                                               (test-result-source-location x t/*testing-vars*))
+                                                  :error (merge x
+                                                                {:type :fail :ctx (vec t/*testing-contexts*)}
+                                                                (test-result-source-location x t/*testing-vars*))
                                                   nil)]
                                      (process e)))]
                 (run! test-ns ns)

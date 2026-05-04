@@ -126,12 +126,6 @@
           line (parse-int line-number)]
       (make-source-location file line))))
 
-(defn of-test-tree-item
-  [test-tree-item]
-  (let [name (:name test-tree-item)]
-    (when (string? name)
-      (of-symbol (symbol name)))))
-
 (defn of-value [value]
   (cond
     (var? value)
@@ -158,5 +152,10 @@
     (instance? Compiler$CompilerException value)
     (of-compiler-exception value)
 
-    (= :ctx (:type value))
-    (of-test-tree-item value)))
+    (map? value)
+    (let [file (:file value)
+          line (:line value)]
+      (when (and (integer? line)
+                 (instance? File file)
+                 (.isFile ^File file))
+        value))))
