@@ -10,7 +10,10 @@
   (let [^File file (cond
                      (nil? file) nil
                      (instance? File file) file
-                     :else (io/file (or (io/resource file) file)))]
+                     :else (if-some [url (io/resource file)]
+                             (when (= "file" (.getProtocol url))
+                               (io/file url))
+                             (io/file file)))]
     (when (and file (.isFile file))
       (.getAbsoluteFile file))))
 
