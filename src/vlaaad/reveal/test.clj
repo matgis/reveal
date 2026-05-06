@@ -250,9 +250,10 @@
     @t/*report-counters*))
 
 (defn- test-result-source-location
-  [{:keys [type expected]} testing-vars]
-  {:pre [(#{:error :fail :pass} type)]}
-  (when-some [test-var (first testing-vars)]
+  [{:keys [type expected]} test-var]
+  {:pre [(#{:error :fail :pass} type)
+         (or (nil? test-var) (var? test-var))]}
+  (when (some? test-var)
     (update (source-location/of-var test-var)
             :line #(or (some-> expected meta :line) %))))
 
@@ -272,23 +273,22 @@
                                                                 :message (str/trim-newline %)
                                                                 :ctx (vec t/*testing-contexts*)})
                                                      nil)
-                        t/report (fn [x]
-                                   (when-let [e (case (:type x)
+                        t/report (fn [{:keys [type] :as x}]
+                                   (when-let [e (case type
                                                   :begin-test-ns (merge {:type :start :name (str (.getName ^Namespace (:ns x)))}
                                                                         (source-location/of-ns (:ns x)))
-                                                  :begin-test-var (merge {:type :start :name (str (symbol (:var x))) :test true}
-                                                                         (source-location/of-var (:var x)))
+                                                  :begin-test-var (let [var (:var x)
+                                                                        var-name (str (symbol var))]
+                                                                    (merge {:type :start :name var-name :test true :test-var var}
+                                                                           (source-location/of-var var)))
                                                   :end-test-ns {:type :stop}
                                                   :end-test-var {:type :stop}
-                                                  :pass (merge x
-                                                               {:type :pass :ctx (vec t/*testing-contexts*)}
-                                                               (test-result-source-location x t/*testing-vars*))
-                                                  :fail (merge x
-                                                               {:type :fail :ctx (vec t/*testing-contexts*)}
-                                                               (test-result-source-location x t/*testing-vars*))
-                                                  :error (merge x
-                                                                {:type :fail :ctx (vec t/*testing-contexts*)}
-                                                                (test-result-source-location x t/*testing-vars*))
+                                                  (:error :fail :pass) (let [test-var (first t/*testing-vars*)
+                                                                             ctx (vec t/*testing-contexts*)
+                                                                             type (case type :error :fail type)]
+                                                                         (merge x
+                                                                                {:type type :ctx ctx}
+                                                                                (test-result-source-location x test-var)))
                                                   nil)]
                                      (process e)))]
                 (run! test-ns ns)
@@ -629,7 +629,8 @@
 ;; actions
 
 (defn- testable-var? [x]
-  (boolean (:test (meta x))))
+  (and (instance? Var x)
+       (boolean (:test (meta x)))))
 
 (action/defaction ::action/test [x]
   (cond
@@ -638,12 +639,13 @@
              (instance? Namespace x))
          (some testable-var? (vals (ns-publics x))))
     #(-> {:fx/type test-view :test x :auto-run true})
-    (and (instance? Var x)
-         (testable-var? x))
+    (testable-var? x)
     #(-> {:fx/type test-view :test x :auto-run true})
     (and (qualified-symbol? x)
-         (let [var (resolve x)]
-           (and var (testable-var? var))))
+         (testable-var? (resolve x)))
     #(-> {:fx/type test-view :test x :auto-run true})
     (some-> x as-deftest-var testable-var?)
-    #(-> {:fx/type test-view :test x :auto-run true})))
+    #(-> {:fx/type test-view :test x :auto-run true})
+    (and (map? x)
+         (testable-var? (:test-var x)))
+    #(-> {:fx/type test-view :test (:test-var x) :auto-run true})))

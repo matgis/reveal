@@ -122,14 +122,16 @@
 
     (map? x)
     (if (and (#{:pass :fail} (:type x))
-             (seq? (:expected x))
-             (contains? x :actual))
+             (contains? x :actual)
+             (let [expected (:expected x ::not-found)]
+               (or (nil? expected)
+                   (seq? expected))))
 
       ;; Treat the value like a test report.
       (fn []
         (let [{:keys [expected actual]} x]
           (if (or (not= '= (first expected))
-                  (not (seq? (:actual x))))
+                  (not (seq? actual)))
 
             ;; The report is either from an uncaught exception or an (is ...)
             ;; expression that doesn't use the = operator. Wrap the diffed
